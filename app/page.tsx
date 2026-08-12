@@ -4,13 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { HOUSE_PLAN, PlanRect } from "./housePlan";
 
-type ViewMode = "arrival" | "ground" | "living";
+type ViewMode = "arrival" | "ground" | "living" | "upper";
 
 type SceneApi = {
   setMode: (mode: ViewMode) => void;
   setNight: (isNight: boolean) => void;
   setAutoRotate: (isAutoRotating: boolean) => void;
+  setPlanOverlay: (enabled: boolean) => void;
   dispose: () => void;
 };
 
@@ -140,21 +142,6 @@ function createTree(parent: THREE.Object3D, palette: Palette, position: [number,
   return group;
 }
 
-function addStoneCourse(parent: THREE.Object3D, palette: Palette, x: number, y: number, z: number, width: number, depth: number, rows: number) {
-  for (let row = 0; row < rows; row += 1) {
-    const stoneHeight = 0.22;
-    const gap = 0.07;
-    const count = Math.max(3, Math.round(width / 0.78));
-    const stoneWidth = (width - gap * (count - 1)) / count;
-    for (let index = 0; index < count; index += 1) {
-      const offset = row % 2 === 0 ? 0 : stoneWidth * 0.48;
-      const stoneX = x - width / 2 + index * (stoneWidth + gap) + stoneWidth / 2 - offset;
-      if (stoneX < x - width / 2 - 0.3 || stoneX > x + width / 2 + 0.3) continue;
-      box(parent, [stoneWidth * 0.92, stoneHeight, depth], [stoneX, y + row * (stoneHeight + 0.03), z], row % 3 === 0 ? palette.limestone : palette.plaster, { rounded: 0.03 });
-    }
-  }
-}
-
 function addWoodFins(parent: THREE.Object3D, palette: Palette, xStart: number, xEnd: number, y: number, z: number, height: number, count: number, depth = 0.13) {
   for (let index = 0; index < count; index += 1) {
     const x = THREE.MathUtils.lerp(xStart, xEnd, index / Math.max(1, count - 1));
@@ -228,6 +215,130 @@ function addStair(parent: THREE.Object3D, palette: Palette, x: number, y: number
   }
 }
 
+function addBed(parent: THREE.Object3D, palette: Palette, x: number, y: number, z: number, width = 1.9, depth = 1.35) {
+  box(parent, [width + 0.12, 0.24, depth + 0.12], [x, y + 0.14, z], palette.wood, { rounded: 0.06 });
+  box(parent, [width, 0.18, depth], [x, y + 0.34, z], palette.plaster, { rounded: 0.05 });
+  box(parent, [width, 0.7, 0.08], [x, y + 0.60, z + depth / 2 - 0.05], palette.wood, { rounded: 0.025 });
+  box(parent, [width * 0.42, 0.12, 0.38], [x - width * 0.22, y + 0.49, z - depth * 0.22], palette.limestone, { rounded: 0.05 });
+  box(parent, [width * 0.42, 0.12, 0.38], [x + width * 0.22, y + 0.49, z - depth * 0.22], palette.limestone, { rounded: 0.05 });
+}
+
+function addCar(parent: THREE.Object3D, palette: Palette, x: number, z: number) {
+  box(parent, [4.05, 0.42, 2.05], [x, 0.78, z], palette.black, { rounded: 0.16 });
+  box(parent, [1.72, 0.38, 1.38], [x + 0.18, 1.14, z], palette.glass, { rounded: 0.12, cast: false });
+  box(parent, [1.78, 0.08, 1.42], [x + 0.18, 1.36, z], palette.black, { rounded: 0.04, cast: false });
+  for (const wheelX of [x - 1.35, x + 1.35]) {
+    for (const wheelZ of [z - 0.68, z + 0.68]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.16, 16), palette.black);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(wheelX, 0.48, wheelZ);
+      wheel.castShadow = true;
+      parent.add(wheel);
+    }
+  }
+  for (const lightX of [x - 1.15, x + 1.15]) {
+    box(parent, [0.34, 0.07, 0.06], [lightX, 0.94, z - 0.99], palette.light, { rounded: 0.02, cast: false });
+  }
+}
+
+const planCenter = (rect: Pick<PlanRect, "x1" | "y1" | "x2" | "y2">): [number, number] => [
+  (rect.x1 + rect.x2) / 2 - HOUSE_PLAN.site.width / 2,
+  (rect.y1 + rect.y2) / 2 - HOUSE_PLAN.site.depth / 2,
+];
+
+const planSize = (rect: Pick<PlanRect, "x1" | "y1" | "x2" | "y2">): [number, number] => [
+  rect.x2 - rect.x1,
+  rect.y2 - rect.y1,
+];
+
+function planBox(
+  parent: THREE.Object3D,
+  rect: Pick<PlanRect, "x1" | "y1" | "x2" | "y2">,
+  floorY: number,
+  height: number,
+  material: THREE.Material,
+  options: { rounded?: number; cast?: boolean; receive?: boolean } = {},
+) {
+  const [x, z] = planCenter(rect);
+  const [width, depth] = planSize(rect);
+  return box(parent, [width, height, depth], [x, floorY + height / 2, z], material, options);
+}
+
+function planSlab(parent: THREE.Object3D, rect: Pick<PlanRect, "x1" | "y1" | "x2" | "y2">, y: number, material: THREE.Material) {
+  const [x, z] = planCenter(rect);
+  const [width, depth] = planSize(rect);
+  return box(parent, [width, 0.16, depth], [x, y, z], material, { cast: false });
+}
+
+function roomMaterial(palette: Palette, material: string) {
+  const map: Record<string, THREE.Material> = {
+    garage: palette.darkPlaster,
+    entry: palette.woodLight,
+    office: palette.wood,
+    circulation: palette.limestone,
+    tatami: palette.woodLight,
+    water: palette.glass,
+    storage: palette.wood,
+    ldk: palette.plaster,
+    living: palette.plaster,
+    dining: palette.plaster,
+    kitchen: palette.wood,
+    service: palette.limestone,
+    courtyard: palette.water,
+    bedroom: palette.wood,
+  };
+  return map[material] ?? palette.plaster;
+}
+
+function addPlanRoomMasses(parent: THREE.Object3D, palette: Palette, rooms: readonly PlanRect[], floorY: number, mode: "ground" | "living" | "half") {
+  rooms.forEach((room) => {
+    if (room.key === "courtyard") return;
+    const outerMaterial = roomMaterial(palette, room.material);
+    const roomHeight = mode === "half" ? 0.10 : 0.14;
+    const roomMesh = planBox(parent, room, floorY, roomHeight, outerMaterial, { rounded: 0.035, cast: false });
+    roomMesh.name = `PLAN_${mode}_${room.key}`;
+  });
+}
+
+function addLowVoidGuard(parent: THREE.Object3D, palette: Palette, rect: Pick<PlanRect, "x1" | "y1" | "x2" | "y2">, floorY: number) {
+  const guardHeight = 0.88;
+  addPlanWall(parent, palette, [rect.x1, rect.y1], [rect.x2, rect.y1], floorY, guardHeight, palette.bronze, 0.055);
+  addPlanWall(parent, palette, [rect.x1, rect.y1], [rect.x1, rect.y2], floorY, guardHeight, palette.bronze, 0.055);
+  addPlanWall(parent, palette, [rect.x2, rect.y1], [rect.x2, rect.y2], floorY, guardHeight, palette.bronze, 0.055);
+  addPlanWall(parent, palette, [rect.x1, rect.y2], [rect.x2, rect.y2], floorY, guardHeight, palette.bronze, 0.055);
+}
+
+function addPlanWall(parent: THREE.Object3D, palette: Palette, a: [number, number], b: [number, number], y: number, height: number, material: THREE.Material, thickness = 0.12) {
+  const ax = a[0] - HOUSE_PLAN.site.width / 2;
+  const az = a[1] - HOUSE_PLAN.site.depth / 2;
+  const bx = b[0] - HOUSE_PLAN.site.width / 2;
+  const bz = b[1] - HOUSE_PLAN.site.depth / 2;
+  const dx = bx - ax;
+  const dz = bz - az;
+  const length = Math.hypot(dx, dz);
+  const wall = box(parent, [length, height, thickness], [(ax + bx) / 2, y + height / 2, (az + bz) / 2], material, { rounded: 0.025 });
+  wall.rotation.y = -Math.atan2(dz, dx);
+  return wall;
+}
+
+function addShallowRoof(parent: THREE.Object3D, palette: Palette, rect: Pick<PlanRect, "x1" | "y1" | "x2" | "y2">, y: number, slope: number) {
+  const [x, z] = planCenter(rect);
+  const [width, depth] = planSize(rect);
+  const roof = box(parent, [width, 0.18, depth], [x, y, z], palette.darkPlaster, { rounded: 0.035, cast: true });
+  roof.rotation.z = slope;
+  const soffit = box(parent, [width - 0.12, 0.07, depth - 0.12], [x, y - 0.14, z], palette.wood, { rounded: 0.02, cast: false });
+  soffit.rotation.z = slope;
+  return roof;
+}
+
+function addRoofOutline(parent: THREE.Object3D, palette: Palette, rect: Pick<PlanRect, "x1" | "y1" | "x2" | "y2">, y: number) {
+  const roofMaterial = palette.darkPlaster;
+  addPlanWall(parent, palette, [rect.x1, rect.y1], [rect.x2, rect.y1], y, 0.16, roofMaterial, 0.12);
+  addPlanWall(parent, palette, [rect.x2, rect.y1], [rect.x2, rect.y2], y, 0.16, roofMaterial, 0.12);
+  addPlanWall(parent, palette, [rect.x2, rect.y2], [rect.x1, rect.y2], y, 0.16, roofMaterial, 0.12);
+  addPlanWall(parent, palette, [rect.x1, rect.y2], [rect.x1, rect.y1], y, 0.16, roofMaterial, 0.12);
+}
+
 function buildScene(container: HTMLDivElement): SceneApi {
   const scene = new THREE.Scene();
   const palette = materialPalette();
@@ -278,19 +389,18 @@ function buildScene(container: HTMLDivElement): SceneApi {
   const groundGroup = new THREE.Group();
   const upperGroup = new THREE.Group();
   const roofGroup = new THREE.Group();
+  const roofCapGroup = new THREE.Group();
   const furnitureGroup = new THREE.Group();
   const groundFurnitureGroup = new THREE.Group();
-  scene.add(siteGroup, groundGroup, upperGroup, roofGroup, furnitureGroup, groundFurnitureGroup);
+  const upperFurnitureGroup = new THREE.Group();
+  scene.add(siteGroup, groundGroup, upperGroup, roofGroup, roofCapGroup, furnitureGroup, groundFurnitureGroup, upperFurnitureGroup);
 
-  box(siteGroup, [17.2, 0.18, 10.9], [0, -0.09, 0], palette.gravel, { cast: false });
-  box(siteGroup, [5.5, 0.05, 2.45], [-4.15, 0.03, -4.15], palette.limestone, { cast: false });
-  box(siteGroup, [3.35, 0.04, 1.5], [4.75, 0.03, 4.18], palette.wood, { cast: false });
-  box(siteGroup, [3.15, 0.025, 2.7], [4.82, 0.04, 2.18], palette.darkPlaster, { cast: false, receive: true });
-  box(siteGroup, [3.12, 0.04, 2.66], [4.82, 0.05, 2.18], palette.water, { cast: false, receive: true });
-  box(siteGroup, [0.05, 0.08, 2.7], [3.27, 0.1, 2.18], palette.bronze, { cast: false });
-  box(siteGroup, [0.05, 0.08, 2.7], [6.37, 0.1, 2.18], palette.bronze, { cast: false });
-  box(siteGroup, [3.15, 0.08, 0.05], [4.82, 0.1, 0.86], palette.bronze, { cast: false });
-  box(siteGroup, [3.15, 0.08, 0.05], [4.82, 0.1, 3.5], palette.bronze, { cast: false });
+  const siteRect = { x1: 0, y1: 0, x2: HOUSE_PLAN.site.width, y2: HOUSE_PLAN.site.depth };
+  planSlab(siteGroup, siteRect, -0.09, palette.gravel);
+  const pathRect = { x1: 0, y1: 0, x2: HOUSE_PLAN.footprint.x1, y2: HOUSE_PLAN.site.depth };
+  planSlab(siteGroup, pathRect, 0.03, palette.limestone);
+  const court = HOUSE_PLAN.courtyard;
+  const courtCenter = planCenter(court);
   addPlanter(siteGroup, palette, -6.75, 0.05, 3.52, 2.8, 0.55);
   addPlanter(siteGroup, palette, 0.2, 0.05, 4.03, 5.8, 0.55);
   addPlanter(siteGroup, palette, 6.95, 0.05, 2.25, 0.42, 4.2);
@@ -298,64 +408,121 @@ function buildScene(container: HTMLDivElement): SceneApi {
   createTree(siteGroup, palette, [7.25, 0, 4.45], 0.92, true);
   createTree(siteGroup, palette, [7.35, 0, -4.45], 0.8);
   createTree(siteGroup, palette, [-7.25, 0, -4.35], 0.62);
-  createTree(siteGroup, palette, [5.95, 0.05, 3.7], 0.72);
-  for (let index = 0; index < 9; index += 1) sphere(siteGroup, 0.16 + (index % 2) * 0.04, [3.65 + index * 0.36, 0.18, 3.56 + (index % 3) * 0.07], palette.leaf, [0.75, 1.4, 0.75]);
+  createTree(siteGroup, palette, [courtCenter[0] + 1.0, 0.08, courtCenter[1] + 1.25], 0.7);
 
-  box(groundGroup, [5.4, 2.75, 6.55], [-3.85, 1.42, 0.22], palette.limestone, { rounded: 0.08 });
-  box(groundGroup, [6.55, 2.75, 6.55], [2.05, 1.42, 0.22], palette.plaster, { rounded: 0.08 });
-  box(groundGroup, [0.42, 2.2, 6.65], [-0.57, 1.58, 0.22], palette.darkPlaster, { rounded: 0.02 });
-  addStoneCourse(groundGroup, palette, -3.85, 0.06, -3.08, 5.28, 0.16, 3);
-  box(groundGroup, [5.02, 2.32, 0.08], [-3.85, 1.28, -3.13], palette.black, { cast: false });
-  box(groundGroup, [4.58, 2.12, 0.08], [-3.85, 1.27, -3.2], palette.wood, { rounded: 0.02 });
-  for (let index = 0; index < 8; index += 1) box(groundGroup, [0.025, 2.02, 0.025], [-6.05 + index * 0.63, 1.28, -3.26], palette.bronze, { cast: false });
-  box(groundGroup, [1.58, 2.7, 0.3], [-0.72, 1.47, -3.05], palette.wood, { rounded: 0.035 });
-  box(groundGroup, [1.22, 2.32, 0.05], [-0.72, 1.33, -3.22], palette.woodLight, { rounded: 0.015 });
-  box(groundGroup, [1.28, 0.08, 0.08], [-0.72, 2.43, -3.28], palette.bronze, { cast: false });
-  box(groundGroup, [0.58, 0.035, 0.035], [-0.72, 1.34, -3.28], palette.bronze, { cast: false });
-  box(groundGroup, [0.025, 1.7, 0.025], [-0.43, 1.35, -3.3], palette.bronze, { cast: false });
-  addPlanter(siteGroup, palette, 1.2, 0.05, -3.22, 1.4, 0.42);
-  addGlassWall(groundGroup, palette, 5.05, 1.55, 3.48, 4.1, 2.24);
-  addWoodFins(groundGroup, palette, 3.35, 6.75, 1.52, 3.37, 2.35, 10, 0.11);
-  box(groundGroup, [5.35, 0.18, 0.22], [3.95, 2.58, 3.3], palette.wood, { rounded: 0.04 });
+  addPlanRoomMasses(groundGroup, palette, HOUSE_PLAN.rooms.one, HOUSE_PLAN.levels.one.floor, "ground");
+  const garage = HOUSE_PLAN.rooms.one.find((room) => room.key === "garage")!;
+  planSlab(groundGroup, garage, 0.2, palette.darkPlaster);
+  planBox(groundGroup, { x1: garage.x1, y1: garage.y1, x2: garage.x1 + 0.1, y2: garage.y2 }, 0.2, 2.45, palette.black, { cast: false });
+  planBox(groundGroup, { x1: garage.x1 + 0.12, y1: garage.y1 + 0.14, x2: garage.x1 + 0.18, y2: garage.y2 - 0.14 }, 0.2, 2.22, palette.wood, { cast: false });
+  addPlanWall(groundGroup, palette, [6.8, 3.2], [6.8, 8.2], 0.2, 2.9, palette.darkPlaster, 0.14);
+  addPlanWall(groundGroup, palette, [13.2, 1.8], [13.2, 3.4], 0.2, 2.9, palette.plaster, 0.12);
+  addPlanWall(groundGroup, palette, [13.2, 6.2], [13.2, 8.2], 0.2, 2.9, palette.plaster, 0.12);
+  const entry = HOUSE_PLAN.rooms.one.find((room) => room.key === "entry")!;
+  planBox(groundGroup, { x1: entry.x1, y1: entry.y1, x2: entry.x2, y2: entry.y1 + 0.08 }, 0.2, 2.7, palette.wood, { rounded: 0.02 });
+  addPlanWall(groundGroup, palette, [1, 1.8], [6.8, 1.8], 0.2, 2.9, palette.limestone, 0.14);
 
-  box(upperGroup, [10.3, 2.28, 4.65], [-1.55, 4.05, 0.62], palette.plaster, { rounded: 0.08 });
-  box(upperGroup, [10.05, 0.16, 1.08], [-1.55, 2.93, -1.72], palette.wood, { rounded: 0.035 });
-  box(upperGroup, [10.65, 0.18, 0.22], [-1.55, 5.16, 0.55], palette.darkPlaster, { rounded: 0.035 });
-  box(upperGroup, [9.52, 1.85, 0.07], [-1.55, 4.06, -1.76], palette.glass, { cast: false });
-  box(upperGroup, [0.08, 1.98, 0.12], [-6.62, 4.06, -1.82], palette.black);
-  box(upperGroup, [0.08, 1.98, 0.12], [3.52, 4.06, -1.82], palette.black);
-  addWoodFins(upperGroup, palette, -5.95, 2.8, 4.1, -1.86, 2.08, 13, 0.12);
-  addGlassWall(upperGroup, palette, 3.56, 4.07, 0.65, 0.08, 2.04);
-  box(upperGroup, [0.18, 2.08, 4.62], [3.38, 4.06, 0.62], palette.darkPlaster, { rounded: 0.03 });
-  box(upperGroup, [0.2, 1.4, 2.7], [3.27, 4.07, 1.1], palette.black, { cast: false });
-  addWoodFins(upperGroup, palette, 3.44, 3.8, 4.1, 1.1, 1.78, 4, 0.12);
+  addPlanRoomMasses(upperGroup, palette, HOUSE_PLAN.rooms.two, HOUSE_PLAN.levels.two.floor, "living");
+  const ldk = HOUSE_PLAN.rooms.two.find((room) => room.key === "ldk")!;
+  planSlab(upperGroup, { x1: ldk.x1, y1: ldk.y1, x2: ldk.x2, y2: ldk.y2 }, 3.3, palette.plaster);
+  const voidRect = HOUSE_PLAN.void2f;
+  planSlab(upperGroup, voidRect, 3.42, palette.rug);
+  planSlab(upperGroup, court, 3.38, palette.darkPlaster);
+  const courtWater = planSlab(upperGroup, {
+    x1: court.x1 + 0.08,
+    y1: court.y1 + 0.08,
+    x2: court.x2 - 0.08,
+    y2: court.y2 - 0.08,
+  }, 3.47, palette.water);
+  addLowVoidGuard(upperGroup, palette, voidRect, 3.3);
+  addPlanWall(upperGroup, palette, [court.x2, court.y1], [court.x2, court.y2], 3.3, 2.18, palette.darkPlaster, 0.18);
+  addPlanWall(upperGroup, palette, [court.x1, court.y1], [court.x2, court.y1], 3.3, 0.42, palette.darkPlaster, 0.18);
+  addPlanWall(upperGroup, palette, [court.x1, court.y2], [court.x2, court.y2], 3.3, 2.18, palette.darkPlaster, 0.18);
+  addWoodFins(upperGroup, palette, -5.1, 0.15, 4.55, -3.95, 2.08, 12, 0.12);
+  addWoodFins(upperGroup, palette, 4.25, 5.2, 4.55, 3.98, 2.12, 4, 0.12);
 
-  box(roofGroup, [12.35, 0.26, 5.2], [-0.2, 5.32, 0.62], palette.darkPlaster, { rounded: 0.05 });
-  box(roofGroup, [6.8, 1.55, 2.02], [-2.22, 6.1, 1.62], palette.wood, { rounded: 0.06 });
-  box(roofGroup, [2.58, 1.55, 2.02], [2.4, 6.1, -0.74], palette.plaster, { rounded: 0.06 });
-  addGlassWall(roofGroup, palette, -2.22, 6.1, 0.58, 6.18, 1.12, 0.07);
-  addWoodFins(roofGroup, palette, -5.3, 0.86, 6.1, 0.51, 1.22, 11, 0.1);
-  box(roofGroup, [2.75, 0.12, 2.55], [1.15, 6.58, 0.64], palette.bronze, { cast: false });
-  addGlassWall(roofGroup, palette, 1.15, 6.96, 0.64, 2.42, 0.82, 0.06);
-  addWoodFins(roofGroup, palette, 0.05, 2.25, 6.98, 0.64, 0.8, 8, 0.08);
-  box(roofGroup, [3.18, 0.18, 2.98], [1.15, 7.45, 0.64], palette.plaster, { rounded: 0.04 });
+  addPlanRoomMasses(roofGroup, palette, HOUSE_PLAN.rooms.half, HOUSE_PLAN.levels.half.floor, "half");
+  const upperSlab = { x1: 1.0, y1: 5.5, x2: 15.0, y2: 8.2 };
+  planSlab(roofGroup, upperSlab, 6.4, palette.darkPlaster);
+  const halfHall = HOUSE_PLAN.rooms.half.find((room) => room.key === "hall_25f")!;
+  planSlab(roofGroup, halfHall, 6.42, palette.wood);
+  addPlanWall(roofGroup, palette, [1, 5.5], [15, 5.5], 6.4, 2.8, palette.darkPlaster, 0.16);
+  addPlanWall(roofGroup, palette, [7.8, 5.5], [7.8, 8.2], 6.4, 2.8, palette.wood, 0.12);
+  addPlanWall(roofGroup, palette, [11.4, 5.5], [11.4, 8.2], 6.4, 2.8, palette.wood, 0.12);
+  addGlassWall(roofGroup, palette, -1.3, 7.25, 1.0, 5.6, 1.02, 0.07);
+  addWoodFins(roofGroup, palette, -3.95, 1.35, 7.25, 0.96, 1.18, 10, 0.1);
+  const lantern = { x1: 6.8, y1: 3.2, x2: 8.6, y2: 5.5 };
+  const lanternCenter = planCenter(lantern);
+  box(roofGroup, [1.75, 0.08, 2.2], [lanternCenter[0], 9.27, lanternCenter[1]], palette.bronze, { cast: false });
+  addPlanWall(roofGroup, palette, [6.8, 3.2], [8.6, 3.2], 6.42, 2.7, palette.glass, 0.06);
+  addPlanWall(roofGroup, palette, [6.8, 5.5], [8.6, 5.5], 6.42, 2.7, palette.glass, 0.06);
+  const roofFootprint = { x1: HOUSE_PLAN.footprint.x1 - 0.12, y1: HOUSE_PLAN.footprint.y1 - 0.12, x2: HOUSE_PLAN.footprint.x2 + 0.12, y2: HOUSE_PLAN.footprint.y2 + 0.12 };
+  addShallowRoof(roofCapGroup, palette, roofFootprint, 9.32, -0.028);
+  addRoofOutline(roofCapGroup, palette, roofFootprint, 9.32);
 
-  box(furnitureGroup, [8.0, 0.06, 3.8], [-0.75, 3.0, 0.36], palette.limestone, { cast: false });
-  box(furnitureGroup, [2.75, 0.035, 1.8], [-1.6, 3.04, 0.72], palette.rug, { cast: false });
-  addSofa(furnitureGroup, palette, -1.6, 3.06, -0.07);
-  addDiningSet(furnitureGroup, palette, 0.9, 3.06, 0.98);
-  addKitchen(furnitureGroup, palette, -0.7, 3.06, 1.92);
-  addPendant(furnitureGroup, palette, 0.35, 4.78, 0.98);
-  addPendant(furnitureGroup, palette, 1.4, 4.78, 0.98);
-  addPendant(furnitureGroup, palette, -0.7, 4.78, 1.92);
-  addStair(furnitureGroup, palette, 2.18, 0.18, -0.1);
-  box(furnitureGroup, [0.16, 0.82, 0.16], [2.18, 0.62, -0.3], palette.bronze, { rounded: 0.04 });
-  box(furnitureGroup, [0.16, 0.82, 0.16], [2.18, 0.62, 0.34], palette.bronze, { rounded: 0.04 });
-  box(groundFurnitureGroup, [2.0, 0.12, 0.7], [-1.7, 1.05, 0.7], palette.woodLight, { rounded: 0.06 });
-  box(groundFurnitureGroup, [0.08, 0.88, 0.08], [-2.45, 0.56, 0.45], palette.black, { rounded: 0.02 });
-  box(groundFurnitureGroup, [0.08, 0.88, 0.08], [-0.95, 0.56, 0.45], palette.black, { rounded: 0.02 });
-  box(groundFurnitureGroup, [1.72, 0.08, 2.2], [1.85, 0.76, 2.0], palette.wood, { cast: false });
-  for (let index = 0; index < 5; index += 1) box(groundFurnitureGroup, [0.06, 0.48, 0.18], [1.2 + index * 0.28, 1.08, 1.25], palette.leaf, { cast: false });
+  const planOverlay = new THREE.Group();
+  planOverlay.name = "PLAN_OVERLAY";
+  planOverlay.visible = false;
+  scene.add(planOverlay);
+  const overlayMaterial = new THREE.MeshBasicMaterial({ color: 0xb27854, transparent: true, opacity: 0.35, depthWrite: false });
+  const overlayLine = new THREE.LineBasicMaterial({ color: 0x192321, transparent: true, opacity: 0.75 });
+  const overlaySite = { x1: 0, y1: 0, x2: HOUSE_PLAN.site.width, y2: HOUSE_PLAN.site.depth };
+  planSlab(planOverlay, overlaySite, 9.28, new THREE.MeshBasicMaterial({ color: 0xe9e6dd, transparent: true, opacity: 0.32, depthWrite: false }));
+  const overlayFootprint = HOUSE_PLAN.footprint;
+  addPlanWall(planOverlay, palette, [overlayFootprint.x1, overlayFootprint.y1], [overlayFootprint.x2, overlayFootprint.y1], 9.34, 0.025, overlayLine, 0.015);
+  addPlanWall(planOverlay, palette, [overlayFootprint.x2, overlayFootprint.y1], [overlayFootprint.x2, overlayFootprint.y2], 9.34, 0.025, overlayLine, 0.015);
+  addPlanWall(planOverlay, palette, [overlayFootprint.x2, overlayFootprint.y2], [overlayFootprint.x1, overlayFootprint.y2], 9.34, 0.025, overlayLine, 0.015);
+  addPlanWall(planOverlay, palette, [overlayFootprint.x1, overlayFootprint.y2], [overlayFootprint.x1, overlayFootprint.y1], 9.34, 0.025, overlayLine, 0.015);
+  [HOUSE_PLAN.rooms.one, HOUSE_PLAN.rooms.two, HOUSE_PLAN.rooms.half].forEach((rooms) => rooms.forEach((room) => {
+    const material = room.key === "courtyard" ? overlayMaterial : overlayLine;
+    addPlanWall(planOverlay, palette, [room.x1, room.y1], [room.x2, room.y1], 9.34, 0.018, material, 0.012);
+    addPlanWall(planOverlay, palette, [room.x2, room.y1], [room.x2, room.y2], 9.34, 0.018, material, 0.012);
+    addPlanWall(planOverlay, palette, [room.x2, room.y2], [room.x1, room.y2], 9.34, 0.018, material, 0.012);
+    addPlanWall(planOverlay, palette, [room.x1, room.y2], [room.x1, room.y1], 9.34, 0.018, material, 0.012);
+  }));
+  addPlanWall(planOverlay, palette, [HOUSE_PLAN.void2f.x1, HOUSE_PLAN.void2f.y1], [HOUSE_PLAN.void2f.x2, HOUSE_PLAN.void2f.y1], 9.38, 0.025, overlayMaterial, 0.025);
+  addPlanWall(planOverlay, palette, [HOUSE_PLAN.void2f.x2, HOUSE_PLAN.void2f.y1], [HOUSE_PLAN.void2f.x2, HOUSE_PLAN.void2f.y2], 9.38, 0.025, overlayMaterial, 0.025);
+  addPlanWall(planOverlay, palette, [HOUSE_PLAN.void2f.x2, HOUSE_PLAN.void2f.y2], [HOUSE_PLAN.void2f.x1, HOUSE_PLAN.void2f.y2], 9.38, 0.025, overlayMaterial, 0.025);
+  addPlanWall(planOverlay, palette, [HOUSE_PLAN.void2f.x1, HOUSE_PLAN.void2f.y2], [HOUSE_PLAN.void2f.x1, HOUSE_PLAN.void2f.y1], 9.38, 0.025, overlayMaterial, 0.025);
+
+  const twoPlan = HOUSE_PLAN.furniture.two;
+  const sofaPlan = twoPlan.find((item) => item.kind === "sofa")!;
+  const diningPlan = twoPlan.find((item) => item.kind === "dining")!;
+  const islandPlan = twoPlan.find((item) => item.kind === "island")!;
+  const [sofaX, sofaZ] = planCenter(sofaPlan);
+  const [diningX, diningZ] = planCenter(diningPlan);
+  const [islandX, islandZ] = planCenter(islandPlan);
+  addSofa(furnitureGroup, palette, sofaX, 3.42, sofaZ);
+  addDiningSet(furnitureGroup, palette, diningX, 3.42, diningZ);
+  addKitchen(furnitureGroup, palette, islandX, 3.42, islandZ);
+  addPendant(furnitureGroup, palette, diningX - 0.55, 5.05, diningZ);
+  addPendant(furnitureGroup, palette, diningX + 0.55, 5.05, diningZ);
+  addPendant(furnitureGroup, palette, islandX, 5.05, islandZ);
+  const [stairX, stairZ] = planCenter(HOUSE_PLAN.stairCore);
+  addStair(furnitureGroup, palette, stairX, 3.38, stairZ - 0.72);
+  addPlanWall(furnitureGroup, palette, [6.8, 3.2], [9.9, 3.2], 3.3, 0.74, palette.bronze, 0.06);
+  const deskPlan = HOUSE_PLAN.furniture.one.find((item) => item.kind === "desk")!;
+  const [deskX, deskZ] = planCenter(deskPlan);
+  box(groundFurnitureGroup, [deskPlan.x2 - deskPlan.x1, 0.12, deskPlan.y2 - deskPlan.y1], [deskX, 1.18, deskZ], palette.woodLight, { rounded: 0.06 });
+  const shelfPlan = HOUSE_PLAN.furniture.one.find((item) => item.kind === "shelf")!;
+  const [shelfX, shelfZ] = planCenter(shelfPlan);
+  box(groundFurnitureGroup, [shelfPlan.x2 - shelfPlan.x1, 1.55, shelfPlan.y2 - shelfPlan.y1], [shelfX, 0.98, shelfZ], palette.wood, { cast: false });
+  const washPlan = HOUSE_PLAN.furniture.one.find((item) => item.kind === "washer")!;
+  const [washX, washZ] = planCenter(washPlan);
+  box(groundFurnitureGroup, [washPlan.x2 - washPlan.x1, 0.92, washPlan.y2 - washPlan.y1], [washX, 0.66, washZ], palette.black, { rounded: 0.03 });
+  const tubPlan = HOUSE_PLAN.furniture.one.find((item) => item.kind === "tub")!;
+  const [tubX, tubZ] = planCenter(tubPlan);
+  box(groundFurnitureGroup, [tubPlan.x2 - tubPlan.x1, 0.48, tubPlan.y2 - tubPlan.y1], [tubX, 0.46, tubZ], palette.water, { rounded: 0.09 });
+  const [carX] = planCenter(garage);
+  const [carOneX, carOneZ] = planCenter({ x1: garage.x1, y1: 3.0, x2: garage.x2, y2: 3.9 });
+  const [, carTwoZ] = planCenter({ x1: garage.x1, y1: 6.1, x2: garage.x2, y2: 7.0 });
+  addCar(groundFurnitureGroup, palette, carOneX, carOneZ);
+  addCar(groundFurnitureGroup, palette, carX, carTwoZ);
+  const halfBeds = HOUSE_PLAN.furniture.half.filter((item) => item.kind === "bed");
+  halfBeds.forEach((bed, index) => {
+    const [bedX, bedZ] = planCenter(bed);
+    addBed(upperFurnitureGroup, palette, bedX, 6.42, bedZ, index === 0 ? 2.05 : 1.55, index === 0 ? 1.45 : 1.18);
+  });
   const addPoint = (position: [number, number, number], color: number, intensity: number, distance: number) => {
     const light = new THREE.PointLight(color, intensity, distance, 2);
     light.position.set(...position);
@@ -365,7 +532,7 @@ function buildScene(container: HTMLDivElement): SceneApi {
   };
   addPoint([-0.72, 3.85, -2.0], 0xffa45d, 1.3, 5);
   addPoint([-0.8, 2.2, -3.0], 0xff9a55, 0.9, 4);
-  addPoint([4.8, 1.15, 2.18], 0x9de1ce, 1.2, 7);
+  addPoint([courtCenter[0], 4.0, courtCenter[1]], 0x9de1ce, 1.2, 7);
   addPoint([1.15, 6.9, 0.64], 0xffad68, 1.4, 4);
   addPoint([0.85, 4.45, 0.98], 0xffa45d, 2.1, 5);
   warmLights.forEach((light) => { light.visible = false; });
@@ -392,10 +559,16 @@ function buildScene(container: HTMLDivElement): SceneApi {
     ldkGhosts.length = 0;
   };
 
+  const setPlanOverlay = (enabled: boolean) => {
+    const existing = scene.getObjectByName("PLAN_OVERLAY");
+    if (existing) existing.visible = enabled;
+  };
+
   const modeTargets: Record<ViewMode, { position: THREE.Vector3; target: THREE.Vector3 }> = {
     arrival: { position: v3(17.5, 13.5, 18.5), target: v3(0, 2.25, 0) },
-    ground: { position: v3(13.8, 10.8, 14.5), target: v3(-0.7, 1.1, -0.05) },
-    living: { position: v3(10.8, 7.8, 12.4), target: v3(-0.3, 3.55, 0.45) },
+    ground: { position: v3(14.5, 10.8, 15.2), target: v3(0.0, 1.45, 0.0) },
+    living: { position: v3(11.2, 8.4, 12.8), target: v3(-0.15, 4.3, 0.3) },
+    upper: { position: v3(13.2, 10.6, 13.6), target: v3(0.0, 7.15, 0.25) },
   };
   let animationFrame = 0;
 
@@ -413,13 +586,16 @@ function buildScene(container: HTMLDivElement): SceneApi {
       if (progress < 1) requestAnimationFrame(animateCamera);
     };
     requestAnimationFrame(animateCamera);
-    groundGroup.visible = next !== "living";
-    upperGroup.visible = next !== "ground";
-    roofGroup.visible = next === "arrival";
+    groundGroup.visible = next !== "living" && next !== "upper";
+    upperGroup.visible = next !== "ground" && next !== "upper";
+    roofGroup.visible = next === "arrival" || next === "upper";
+    roofCapGroup.visible = next === "arrival";
     setLdkCutaway(next === "living");
-    furnitureGroup.visible = next !== "ground";
-    groundFurnitureGroup.visible = next !== "living";
+    furnitureGroup.visible = next !== "ground" && next !== "upper";
+    groundFurnitureGroup.visible = next !== "living" && next !== "upper";
+    upperFurnitureGroup.visible = next === "arrival" || next === "upper";
     siteGroup.visible = true;
+    setPlanOverlay(false);
   };
 
   const toggleNight = (next: boolean) => {
@@ -450,8 +626,7 @@ function buildScene(container: HTMLDivElement): SceneApi {
   const animate = (now?: number) => {
     timer.update(now);
     const elapsed = timer.getElapsed();
-    const water = siteGroup.children[5];
-    if (water instanceof THREE.Mesh) water.position.y = 0.05 + Math.sin(elapsed * 0.65) * 0.008;
+    courtWater.position.y = 3.47 + Math.sin(elapsed * 0.65) * 0.008;
     controls.update();
     renderer.render(scene, camera);
     animationFrame = requestAnimationFrame(animate);
@@ -462,6 +637,7 @@ function buildScene(container: HTMLDivElement): SceneApi {
     setMode: tweenCamera,
     setNight: toggleNight,
     setAutoRotate: (isAutoRotating: boolean) => { controls.autoRotate = isAutoRotating; },
+    setPlanOverlay,
     dispose: () => {
       cancelAnimationFrame(animationFrame);
       resizeObserver.disconnect();
@@ -482,6 +658,7 @@ const viewOptions: { id: ViewMode; label: string; number: string }[] = [
   { id: "arrival", label: "全体", number: "01" },
   { id: "ground", label: "1F", number: "02" },
   { id: "living", label: "LDK", number: "03" },
+  { id: "upper", label: "2.5F", number: "04" },
 ];
 
 export default function Home() {
@@ -490,6 +667,7 @@ export default function Home() {
   const [activeView, setActiveView] = useState<ViewMode>("arrival");
   const [isNight, setIsNight] = useState(false);
   const [autoRotate, setAutoRotate] = useState(true);
+  const [showPlan, setShowPlan] = useState(false);
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -503,6 +681,7 @@ export default function Home() {
 
   const changeView = (mode: ViewMode) => {
     setActiveView(mode);
+    setShowPlan(false);
     apiRef.current?.setMode(mode);
   };
 
@@ -516,6 +695,12 @@ export default function Home() {
     const next = !autoRotate;
     setAutoRotate(next);
     apiRef.current?.setAutoRotate(next);
+  };
+
+  const changePlan = () => {
+    const next = !showPlan;
+    setShowPlan(next);
+    apiRef.current?.setPlanOverlay(next);
   };
 
   return (
@@ -558,6 +743,9 @@ export default function Home() {
           ))}
           <button className={isNight ? "view-button active night-button" : "view-button night-button"} onClick={changeNight}>
             <span>{isNight ? "☼" : "☾"}</span>{isNight ? "DAY" : "NIGHT"}
+          </button>
+          <button className={showPlan ? "view-button active plan-button" : "view-button plan-button"} onClick={changePlan}>
+            <span>⌗</span>PLAN
           </button>
         </div>
       </nav>
